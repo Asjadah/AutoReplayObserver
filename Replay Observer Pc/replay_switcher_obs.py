@@ -9,19 +9,20 @@ import time
 # =====================
 BROADCASTER_WS = "ws://10.0.0.34:6789"  # POV Observer PC broadcasting kills
 SLOT_KEY_MAP = {
-    0: 'f1',
-    1: 'f2',
-    2: 'f3',
-    3: 'f4',
-    4: 'f5',
-    5: 'f6',
-    6: 'f7',
-    7: 'f8',
-    8: 'f9',
-    9: 'f10',
-    10: 'f11',
-    11: 'f12'
+    0: '1',
+    1: '2',
+    2: '3',
+    3: '4',
+    4: '5',
+    5: '6',
+    6: '7',
+    7: '8',
+    8: '9',
+    9: '0',
+    10: '-',
+    11: '='
 }
+
 
 REPLAY_DELAY = 5.5  # seconds delay for replay observer
 
@@ -29,7 +30,8 @@ REPLAY_DELAY = 5.5  # seconds delay for replay observer
 # TRACK KILLS
 # =====================
 previous_kills = {}
-delayed_events = []  # queue of delayed kill events
+delayed_events = []   # queue of delayed kill events
+player_alive = {}     # track who is alive
 
 
 async def handle_event(event):
@@ -39,11 +41,19 @@ async def handle_event(event):
         # Multiple players
         if "allplayers" in data:
             for steamid, pdata in data["allplayers"].items():
+                # Track alive state
+                alive = pdata.get("state", {}).get("health", 0) > 0
+                player_alive[steamid] = alive
+
                 await check_kill(steamid, pdata)
 
         # Single player
         elif "player" in data:
             steamid = data["player"].get("steamid")
+            if steamid:
+                alive = data["player"].get("state", {}).get("health", 0) > 0
+                player_alive[steamid] = alive
+
             await check_kill(steamid, data["player"])
 
     except Exception as e:
@@ -66,13 +76,14 @@ async def check_kill(steamid, pdata):
             key = SLOT_KEY_MAP[slot]
             trigger_time = time.time() + REPLAY_DELAY
 
-            # Queue event
+            # Queue event with steamid for alive check
             delayed_events.append({
                 "time": trigger_time,
                 "slot": slot,
                 "key": key,
                 "name": name,
-                "kills": kills
+                "kills": kills,
+                "steamid": steamid
             })
             print(f"Queued switch to {name} (Slot {slot}) after {REPLAY_DELAY}s")
         else:
@@ -87,16 +98,21 @@ async def delayed_executor():
         now = time.time()
         for event in delayed_events[:]:
             if event["time"] <= now:
-                try:
-                    print(f"Switching Replay Observer to {event['name']} "
-                          f"(Slot {event['slot']}) by pressing {event['key'].upper()}")
-                    pyautogui.press(event["key"])
-                    time.sleep(0.2)  # small delay to avoid overlapping key presses
-                except Exception as e:
-                    print(f"Failed to switch observer: {e}")
+                steamid = event.get("steamid")
+                # Skip if the killer is dead
+                if steamid and not player_alive.get(steamid, True):
+                    print(f"Skipping replay for {event['name']} (Slot {event['slot']}) – player died before replay")
+                else:
+                    try:
+                        print(f"Switching Replay Observer to {event['name']} "
+                              f"(Slot {event['slot']}) by pressing {event['key'].upper()}")
+                        pyautogui.press(event["key"])
+                        time.sleep(0.2)  # small delay to avoid overlapping key presses
+                    except Exception as e:
+                        print(f"Failed to switch observer: {e}")
+
                 delayed_events.remove(event)
         await asyncio.sleep(0.1)
-
 
 # =====================
 # LISTEN TO BROADCASTER
